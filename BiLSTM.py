@@ -11,46 +11,53 @@ from torch.utils.data import (
 from tqdm import tqdm
 from nn import train_dataset, train_loader, test_dataset, test_loader
 
-# Simple CNN
-class CNN(nn.Module):
-    def __init__(self, in_channels = 1, num_classes = 10):
-        super().__init__()                                   # both way works
 
-        self.conv1 = nn.Conv2d(in_channels = in_channels, out_channels = 8, kernel_size = (3,3), stride = (1,1), padding = (1,1))
-        self.pool  = nn.MaxPool2d(kernel_size = (2,2), stride = (2,2))
-        self.conv2 = nn.Conv2d(in_channels = 8, out_channels = 16, kernel_size = (3,3), stride = (1,1), padding = (1,1))
-        self.fc1 = nn.Linear(16 * 7 * 7, num_classes)
-
-    def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = self.pool(x)
-        x = F.relu(self.conv2(x))
-        x = self.pool(x)
-        x = x.reshape(x.shape[0], -1)
-        x = self.fc1(x)
-        return x
-    
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameters
-in_channels = 1
+input_size = 28
+hidden_size = 256
+num_layers = 2
 num_classes = 10
-learning_rate = 3e-4 # karpathy's constant
+sequence_length = 28
+learning_rate = 0.005
 batch_size = 64
 num_epochs = 2
 
-model = CNN().to(device = device)
+# Create a bidirectional LSTM
+class BiLSTM(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, num_classes):
+        super(BiLSTM, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(
+            input_size, hidden_size, num_layers, batch_first=True, bidirectional=True
+        )
+        self.fc = nn.Linear(hidden_size * 2, num_classes)
+
+    def forward(self, x):
+        h0 = torch.zeros(self.num_layers * 2, x.size(0), self.hidden_size).to(device)
+        c0 = torch.zeros(self.num_layers * 2, x.size(0), self.hidden_size).to(device)
+
+        out, _ = self.lstm(x)
+        out = self.fc(out[:, -1, :])
+
+        return out
+
+    
+
+model = BiLSTM(input_size, hidden_size, num_layers, num_classes).to(device)
 
 # Loss and optimizer
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr = learning_rate)
 
-num_epochs = 3
+
 for epoch in range(num_epochs):
     for batch_idx, (data, target) in enumerate(tqdm(train_loader)):
         # Get data to cuda if possible
-        data = data.to(device = device)
+        data = data.to(device = device).squeeze(1)
         target = target.to(device = device)
 
         # Forward
@@ -71,7 +78,7 @@ def check_accuracy(loader, model):
 
     with torch.no_grad():
         for x, y in loader:
-            x = x.to(device = device)
+            x = x.to(device = device).squeeze(1)
             y = y.to(device = device)
 
             scores = model(x)
